@@ -3,3 +3,6 @@ pandas
 pdfplumber
 pdf2docx
 openpyxl
+Pillow
+python-docx
+pypdf
