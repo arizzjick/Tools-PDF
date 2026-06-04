@@ -201,12 +201,13 @@ with st.sidebar:
     st.markdown("### 🌐 Navigation Suite")
     if st.button("🏠 Menu Utama Dashboard", use_container_width=True):
         st.session_state.current_tool = "Dashboard"
+        st.rerun()
     st.divider()
     st.markdown("### ☕ Developer Support")
     st.link_button("🔴 Subscribe YouTube", url="https://www.youtube.com/@BHG_17", use_container_width=True)
     st.link_button("💛 Donasi via Trakteer", url="https://sociabuzz.com/tsyndromeg/tribe", use_container_width=True)
     st.divider()
-    st.caption("Pro Document Suite v5.0 Enterprise")
+    st.caption("Pro Document Suite v5.1 Enterprise")
 
 # ==========================================
 #          HALAMAN 1: DASHBOARD UTAMA
@@ -228,13 +229,12 @@ if st.session_state.current_tool == "Dashboard":
             continue
             
         with cols[col_idx % 3]:
-            # Desain Card Menggunakan Gabungan Info & Button Ber-Key Spesifik
             st.markdown(f"#### {info['icon']} {nama}")
             st.caption(info["desc"])
             if st.button(f"Buka {nama} →", key=f"btn_nav_{nama}", use_container_width=True):
                 st.session_state.current_tool = nama
                 st.rerun()
-            st.write("") # Spacer antarcat
+            st.write("") 
         col_idx += 1
 
 # ==========================================
@@ -243,8 +243,11 @@ if st.session_state.current_tool == "Dashboard":
 else:
     tool = st.session_state.current_tool
     
-    # Header Fitur Aktif
-    st.button("⬅️ Kembali ke Dashboard Utama", key="back_btn")
+    # FIX: Tombol kembali sekarang 100% fungsional dengan st.rerun()
+    if st.button("⬅️ Kembali ke Dashboard Utama", key="back_btn"):
+        st.session_state.current_tool = "Dashboard"
+        st.rerun()
+        
     st.title(f"{DAFTAR_FITUR[tool]['icon']} Workspace: {tool}")
     st.caption(DAFTAR_FITUR[tool]['desc'])
     st.divider()
@@ -254,14 +257,28 @@ else:
     if tool == "Compress PDF":
         up_file = st.file_uploader("Unggah file PDF Anda:", type=["pdf"])
         if up_file:
-            dpi = st.slider("Resolusi Kompresi (DPI):", 60, 200, 110, 10)
+            # FIX: Deteksi dan kunci info ukuran awal dokumen agar tidak hilang
+            size_awal = len(up_file.getvalue()) / (1024 * 1024)
+            st.info(f"📂 Ukuran Berkas Asli: **{size_awal:.2f} MB**")
+            
+            dpi = st.slider("Resolusi Kompresi (DPI):", 60, 200, 100, 10)
             if st.button("⚡ Jalankan Kompresi", type="primary"):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as inf, tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as outf:
                     inf.write(up_file.getvalue())
                     with st.spinner("Sistem sedang mengompres..."):
                         sukses, msg = kompres_pdf_custom(inf.name, outf.name, dpi)
                     if sukses:
+                        # FIX: Hitung ukuran akhir dan tampilkan metrik perbandingan penurunan secara detail
+                        size_akhir = os.path.getsize(outf.name) / (1024 * 1024)
                         st.success("Selesai Dikompres!")
+                        
+                        # Menampilkan data visual penurunan ukuran file
+                        st.metric(
+                            label="Ukuran Hasil Akhir", 
+                            value=f"{size_akhir:.2f} MB", 
+                            delta=f"-{((size_awal - size_akhir) / size_awal) * 100:.1f}% Lebih Kecil"
+                        )
+                        
                         with open(outf.name, "rb") as f:
                             st.download_button("💾 Unduh PDF Hasil", f, file_name=f"Compressed_{up_file.name}", use_container_width=True)
                     else: st.error(f"Gagal: {msg}")
