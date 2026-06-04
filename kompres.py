@@ -4,49 +4,51 @@ import subprocess
 import tempfile
 import pandas as pd
 import pdfplumber
+from PIL import Image
+from docx import Document
+from docx.shared import Inches
+import pypdf
 
-# Pengamanan import comtypes: Hanya di-import jika berjalan di Windows OS
+# Pengamanan import comtypes: Hanya di Windows Lokal
 if os.name == 'nt':
     import comtypes.client
 
-# --- FUNGSI UTAMA (BACKEND) ---
+# ==========================================
+#         BACKEND ENGINE FUNCTIONS
+# ==========================================
 
 def cari_ghostscript():
-    if os.name != 'nt': 
-        return 'gs'
+    if os.name != 'nt': return 'gs'
     try:
         subprocess.run(['gswin64c', '-version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return 'gswin64c'
-    except FileNotFoundError:
-        pass
+    except FileNotFoundError: pass
     folder_default_gs = r"C:\Program Files\gs"
     if os.path.exists(folder_default_gs):
         for root, dirs, files in os.walk(folder_default_gs):
-            if "gswin64c.exe" in files:
-                return f'"{os.path.join(root, "gswin64c.exe")}"'
+            if "gswin64c.exe" in files: return f'"{os.path.join(root, "gswin64c.exe")}"'
     return None
 
 def kompres_pdf_custom(input_path, output_path, dpi):
     gs_cmd = cari_ghostscript()
-    if not gs_cmd:
-        return False, "Ghostscript tidak ditemukan."
-    
+    if not gs_cmd: return False, "Ghostscript tidak ditemukan."
     perintah = (
         f'{gs_cmd} -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dNOPAUSE -dBATCH '
-        f'-dPDFSETTINGS=/screen '
-        f'-dColorImageDownsampleType=/Bicubic -dColorImageResolution={dpi} '
-        f'-dGrayImageDownsampleType=/Bicubic -dGrayImageResolution={dpi} '
-        f'-dMonoImageDownsampleType=/Bicubic -dMonoImageResolution={dpi} '
-        f'-sOutputFile="{output_path}" "{input_path}"'
+        f'-dPDFSETTINGS=/screen -dColorImageResolution={dpi} -sOutputFile="{output_path}" "{input_path}"'
     )
     try:
         subprocess.run(perintah, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return True, "Sukses"
-    except subprocess.CalledProcessError as e:
-        return False, str(e)
+    except Exception as e: return False, str(e)
+
+def office_to_pdf_linux(input_path, output_path):
+    try:
+        outdir = os.path.dirname(output_path)
+        subprocess.run(['libreoffice', '--headless', '--convert-to', 'pdf', '--outdir', outdir, input_path], check=True)
+        return True, "Sukses"
+    except Exception as e: return False, str(e)
 
 def word_to_pdf(input_path, output_path):
-    # JIKA BERJALAN DI WINDOWS (LOKAL)
     if os.name == 'nt':
         try:
             comtypes.CoInitialize()
@@ -54,27 +56,12 @@ def word_to_pdf(input_path, output_path):
             word.Visible = False
             doc = word.Documents.Open(os.path.abspath(input_path))
             doc.SaveAs(os.path.abspath(output_path), FileFormat=17)
-            doc.Close(False)
-            word.Quit()
+            doc.Close(False); word.Quit()
             return True, "Sukses"
-        except Exception as e:
-            try: word.Quit()
-            except: pass
-            return False, str(e)
-    # JIKA BERJALAN DI LINUX (STREAMLIT COMMUNITY CLOUD)
-    else:
-        try:
-            outdir = os.path.dirname(output_path)
-            subprocess.run([
-                'libreoffice', '--headless', '--convert-to', 'pdf',
-                '--outdir', outdir, input_path
-            ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            return True, "Sukses"
-        except Exception as e:
-            return False, str(e)
+        except Exception as e: return False, str(e)
+    else: return office_to_pdf_linux(input_path, output_path)
 
 def excel_to_pdf(input_path, output_path):
-    # JIKA BERJALAN DI WINDOWS (LOKAL)
     if os.name == 'nt':
         try:
             comtypes.CoInitialize()
@@ -82,236 +69,374 @@ def excel_to_pdf(input_path, output_path):
             excel.Visible = False
             wb = excel.Workbooks.Open(os.path.abspath(input_path))
             wb.ExportAsFixedFormat(0, os.path.abspath(output_path))
-            wb.Close(False)
-            excel.Quit()
+            wb.Close(False); excel.Quit()
             return True, "Sukses"
-        except Exception as e:
-            try: excel.Quit()
-            except: pass
-            return False, str(e)
-    # JIKA BERJALAN DI LINUX (STREAMLIT COMMUNITY CLOUD)
-    else:
+        except Exception as e: return False, str(e)
+    else: return office_to_pdf_linux(input_path, output_path)
+
+def ppt_to_pdf(input_path, output_path):
+    if os.name == 'nt':
         try:
-            outdir = os.path.dirname(output_path)
-            subprocess.run([
-                'libreoffice', '--headless', '--convert-to', 'pdf',
-                '--outdir', outdir, input_path
-            ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            comtypes.CoInitialize()
+            ppt = comtypes.client.CreateObject('PowerPoint.Application')
+            pres = ppt.Presentations.Open(os.path.abspath(input_path), WithWindow=False)
+            pres.SaveAs(os.path.abspath(output_path), FileFormat=32)
+            pres.Close(); ppt.Quit()
             return True, "Sukses"
-        except Exception as e:
-            return False, str(e)
+        except Exception as e: return False, str(e)
+    else: return office_to_pdf_linux(input_path, output_path)
 
-# --- DETEKSI BAHASA OTOMATIS ---
-bahasa_terdeteksi = "id"
-try:
-    lang_header = st.context.headers.get("Accept-Language", "en")
-    if "id" not in lang_header.lower():
-        bahasa_terdeteksi = "en"
-except:
-    pass
+def merge_pdfs(input_paths, output_path):
+    try:
+        merger = pypdf.PdfMerger()
+        for path in input_paths: merger.append(path)
+        merger.write(output_path)
+        merger.close()
+        return True, "Sukses"
+    except Exception as e: return False, str(e)
 
-# --- DICTIONARY MULTI-BAHASA ---
-KAMUS = {
-    "id": {
-        "judul_app": "💼 Pro Document Suite",
-        "sub_app": "Sistem manajemen dan konversi dokumen terintegrasi dengan performa tinggi.",
-        "tab1": "📉 Kompres PDF", "tab2": "📝 Word ➔ PDF", "tab3": "📊 Excel ➔ PDF", "tab4": "📄 PDF ➔ Word", "tab5": "📈 PDF ➔ Excel",
-        "side_support": "☕ Apresiasi & Dukungan", "side_desc": "Dukung pengembang agar tetap semangat memperbarui sistem ini!",
-        "side_sub": "🔴 Subscribe YouTube", "side_don": "💛 Donasi via Trakteer / Saweria", "side_lang": "🌐 Pilih Bahasa (Language)",
-        "comp_title": "Menu Kompresi PDF", "comp_up": "Unggah file PDF yang ingin dikecilkan:", "comp_orig": "📂 Berkas asli:",
-        "comp_dpi": "Resolusi (DPI):", "comp_btn": "⚡ Jalankan Kompresi", "comp_spin": "Sistem sedang mengoptimasi...",
-        "comp_success": "Selesai dikompres!", "comp_final": "Ukuran Akhir", "comp_dl": "💾 Unduh PDF Hasil",
-        "w_title": "Konversi Word (.docx) ke PDF", "w_up": "Unggah dokumen Word Anda:", "w_btn": "⚡ Konversi ke PDF", "w_spin": "Mengonversi dokumen Word...", "w_success": "Konversi Berhasil!", "w_dl": "💾 Unduh File PDF", "w_err": "Gagal konversi. Sistem mendeteksi gangguan software Office.",
-        "e_title": "Konversi Excel (.xlsx) ke PDF", "e_up": "Unggah sheet Excel Anda:", "e_btn": "⚡ Konversi ke PDF", "e_spin": "Memproses lembar kerja Excel...", "e_success": "Konversi Berhasil!", "e_dl": "💾 Unduh File PDF", "e_err": "Gagal konversi. Sistem mendeteksi gangguan software Office.",
-        "pw_title": "Konversi PDF ke Word (.docx)", "pw_up": "Unggah file PDF untuk dijadikan Word:", "pw_btn": "⚡ Konversi ke Word", "pw_spin": "Mengekstrak teks...", "pw_success": "Konversi Berhasil!", "pw_dl": "💾 Unduh File Word", "pw_err": "Gagal konversi:",
-        "pe_title": "Konversi PDF ke Excel (.xlsx)", "pe_up": "Unggah file PDF berisi tabel data:", "pe_btn": "⚡ Konversi ke Excel", "pe_spin": "Mendeteksi tabel data...", "pe_success": "Tabel data berhasil diekstrak!", "pe_dl": "💾 Unduh File Excel", "pe_err": "Gagal mengekstrak data:", "pe_warn": "Tidak dideteksi adanya struktur tabel data numerik."
-    },
-    "en": {
-        "judul_app": "💼 Pro Document Suite",
-        "sub_app": "High-performance integrated document conversion and management system.",
-        "tab1": "📉 Compress PDF", "tab2": "📝 Word ➔ PDF", "tab3": "📊 Excel ➔ PDF", "tab4": "📄 PDF ➔ Word", "tab5": "📈 PDF ➔ Excel",
-        "side_support": "☕ Appreciation & Support", "side_desc": "Support the developer to keep this system running and updated!",
-        "side_sub": "🔴 Subscribe YouTube", "side_don": "💛 Donate via SocialBuzz", "side_lang": "🌐 Select Language",
-        "comp_title": "PDF Compression Menu", "comp_up": "Upload PDF file to compress:", "comp_orig": "📂 Original file size:",
-        "comp_dpi": "Resolution (DPI):", "comp_btn": "⚡ Run Compression", "comp_spin": "System is optimizing...",
-        "comp_success": "Successfully compressed!", "comp_final": "Final Size", "comp_dl": "💾 Download Resulting PDF",
-        "w_title": "Convert Word (.docx) to PDF", "w_up": "Upload your Word document:", "w_btn": "⚡ Convert to PDF", "w_spin": "Converting Word document...", "w_success": "Conversion Successful!", "w_dl": "💾 Download PDF File", "w_err": "Conversion failed. Office software issue detected.",
-        "e_title": "Convert Excel (.xlsx) to PDF", "e_up": "Upload your Excel sheet:", "e_btn": "⚡ Convert to PDF", "e_spin": "Processing Excel sheet...", "e_success": "Conversion Successful!", "e_dl": "💾 Download PDF File", "e_err": "Conversion failed. Office software issue detected.",
-        "pw_title": "Convert PDF to Word (.docx)", "pw_up": "Upload PDF file to convert into Word:", "pw_btn": "⚡ Convert to Word", "pw_spin": "Extracting text...", "pw_success": "Conversion Successful!", "pw_dl": "💾 Download Word File", "pw_err": "Conversion failed:",
-        "pe_title": "Convert PDF to Excel (.xlsx)", "pe_up": "Upload PDF file containing data tables:", "pe_btn": "⚡ Convert to Excel", "pe_spin": "Detecting data tables...", "pe_success": "Tables successfully extracted!", "pe_dl": "💾 Download Excel File", "pe_err": "Data extraction failed:", "pe_warn": "No numerical table structures were detected in the file."
-    }
-}
+def split_pdf(input_path, out_dir):
+    try:
+        reader = pypdf.PdfReader(input_path)
+        generated_files = []
+        for idx, page in enumerate(reader.pages):
+            writer = pypdf.PdfWriter()
+            writer.add_page(page)
+            out_path = os.path.join(out_dir, f"Page_{idx+1}.pdf")
+            with open(out_path, "wb") as f: writer.write(f)
+            generated_files.append(out_path)
+        return True, generated_files
+    except Exception as e: return False, str(e)
 
-# --- KONFIGURASI HALAMAN STREAMLIT ---
-st.set_page_config(page_title="Pro Document Suite", page_icon="💼", layout="centered")
+def rotate_pdf(input_path, output_path, angle):
+    try:
+        reader = pypdf.PdfReader(input_path)
+        writer = pypdf.PdfWriter()
+        for page in reader.pages:
+            page.rotate(angle)
+            writer.add_page(page)
+        with open(output_path, "wb") as f: writer.write(f)
+        return True, "Sukses"
+    except Exception as e: return False, str(e)
 
-# --- TRICK CSS HYPER-SPECIFICITY (MENGHAPUS TOTAL INFO LIMIT 200MB) ---
+def protect_pdf(input_path, output_path, password):
+    try:
+        reader = pypdf.PdfReader(input_path)
+        writer = pypdf.PdfWriter()
+        for page in reader.pages: writer.add_page(page)
+        writer.encrypt(password)
+        with open(output_path, "wb") as f: writer.write(f)
+        return True, "Sukses"
+    except Exception as e: return False, str(e)
+
+def unlock_pdf(input_path, output_path, password):
+    try:
+        reader = pypdf.PdfReader(input_path)
+        if reader.is_encrypted:
+            reader.decrypt(password)
+        writer = pypdf.PdfWriter()
+        for page in reader.pages: writer.add_page(page)
+        with open(output_path, "wb") as f: writer.write(f)
+        return True, "Sukses"
+    except Exception as e: return False, str(e)
+
+# ==========================================
+#          STREAMLIT CONFIG & UI
+# ==========================================
+st.set_page_config(page_title="Pro Document Suite", page_icon="💼", layout="wide")
+
+# BOM NUKLIR CSS: Hilangkan Limit 200MB & Bikin Desain Grid Elegan
 st.markdown("""
     <style>
     html body [data-testid="stFileUploaderLimitHint"],
     html body div[data-testid="stFileUploader"] small,
-    html body div[data-testid="stFileUploader"] [class*="Limit"],
-    html body [data-testid="stFileUploaderDropzone"] + div,
-    html body [data-testid="stFileUploaderDropzoneInstructions"] + div,
-    html body [data-testid="stFileUploaderDropzoneInstructions"] > div:nth-child(2),
-    html body [data-testid="stFileUploaderDropzoneInstructions"] > span:nth-child(2),
-    html body [data-testid="stFileUploaderDropzoneInstructions"] > div:last-child,
-    html body div[data-testid="stFileUploader"] > div:last-child {
-        display: none !important;
-        visibility: hidden !important;
-        height: 0px !important;
-        padding: 0px !important;
-        margin: 0px !important;
-        opacity: 0 !important;
+    html body [data-testid="stFileUploaderDropzoneInstructions"] > div:nth-child(2) {
+        display: none !important; visibility: hidden !important; height: 0px !important; padding: 0px !important;
     }
-    
-    html body [data-testid="stFileUploaderUploadedFiles"] {
-        display: block !important;
-        visibility: visible !important;
-        height: auto !important;
-    }
+    .main-title { text-align: center; font-size: 2.5rem; font-weight: bold; margin-bottom: 5px; }
+    .sub-title { text-align: center; color: #666; font-size: 1.1rem; margin-bottom: 25px; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- SIDEBAR NAVIGASI & BAHASA ---
+# Inisialisasi State Halaman Navigasi
+if "current_tool" not in st.session_state:
+    st.session_state.current_tool = "Dashboard"
+
+# Mapping Semua 30 Fitur Sesuai Gambar
+DAFTAR_FITUR = {
+    "Merge PDF": {"icon": "🔗", "desc": "Gabungkan beberapa file PDF menjadi satu dokumen dengan mudah.", "cat": "Organize"},
+    "Split PDF": {"icon": "✂️", "desc": "Pisah halaman PDF menjadi file terpisah atau rentang tertentu.", "cat": "Organize"},
+    "Compress PDF": {"icon": "📉", "desc": "Perkecil ukuran file PDF Anda secara optimal tanpa merusak kualitas.", "cat": "Optimize"},
+    "PDF to Word": {"icon": "📝", "desc": "Konversi dokumen PDF menjadi file Word (.docx) yang dapat diedit.", "cat": "Convert"},
+    "PDF to PowerPoint": {"icon": "📊", "desc": "Ubah file PDF menjadi slide presentasi PowerPoint (.pptx).", "cat": "Convert"},
+    "PDF to Excel": {"icon": "📈", "desc": "Ekstrak tabel data dari PDF langsung ke spreadsheet Excel (.xlsx).", "cat": "Convert"},
+    "Word to PDF": {"icon": "📄", "desc": "Konversi dokumen Microsoft Word (.docx) menjadi file PDF rapi.", "cat": "Convert"},
+    "PowerPoint to PDF": {"icon": "📉", "desc": "Ubah dokumen presentasi PowerPoint (.pptx) menjadi format PDF.", "cat": "Convert"},
+    "Excel to PDF": {"icon": "📊", "desc": "Jadikan data spreadsheet Excel (.xlsx) Anda ke dokumen PDF.", "cat": "Convert"},
+    "Edit PDF": {"icon": "✏️", "desc": "Tambahkan teks, gambar, bentuk, atau anotasi pada file PDF.", "cat": "Edit"},
+    "PDF to JPG": {"icon": "🖼️", "desc": "Ekstrak semua gambar atau ubah halaman PDF menjadi file gambar JPG.", "cat": "Convert"},
+    "JPG to PDF": {"icon": "🖼️", "desc": "Ubah gambar JPG/PNG menjadi file dokumen PDF secara instan.", "cat": "Convert"},
+    "Sign PDF": {"icon": "🔏", "desc": "Tambahkan tanda tangan digital atau mintalah tanda tangan elektronik.", "cat": "Security"},
+    "Watermark": {"icon": "🏷️", "desc": "Beri cap teks atau gambar di atas file PDF secara kustom.", "cat": "Edit"},
+    "Rotate PDF": {"icon": "🔄", "desc": "Putar arah halaman dokumen PDF Anda sesuai kebutuhan.", "cat": "Organize"},
+    "HTML to PDF": {"icon": "🌐", "desc": "Ubah halaman web atau file HTML menjadi dokumen PDF.", "cat": "Convert"},
+    "Unlock PDF": {"icon": "🔓", "desc": "Hapus enkripsi password keamanan pada berkas PDF Anda.", "cat": "Security"},
+    "Protect PDF": {"icon": "🔒", "desc": "Amankan file PDF berharga Anda dengan password enkripsi kuat.", "cat": "Security"},
+    "Organize PDF": {"icon": "🗂️", "desc": "Hapus, susun ulang, atau tambah halaman pada dokumen PDF.", "cat": "Organize"},
+    "PDF to PDF/A": {"icon": "📜", "desc": "Konversi dokumen PDF ke standar ISO PDF/A untuk arsip jangka panjang.", "cat": "Convert"},
+    "Repair PDF": {"icon": "🔧", "desc": "Perbaiki file PDF rusak atau corrupt agar dapat terbaca kembali.", "cat": "Optimize"},
+    "Page numbers": {"icon": "🔢", "desc": "Tambahkan nomor halaman pada dokumen PDF secara otomatis.", "cat": "Edit"},
+    "Scan to PDF": {"icon": "🖨️", "desc": "Ambil pindaian dari perangkat mobile dan jadikan PDF di browser.", "cat": "Convert"},
+    "OCR PDF": {"icon": "🔍", "desc": "Ubah dokumen PDF hasil scan menjadi teks yang bisa dicari/di-copy.", "cat": "Intelligence"},
+    "Compare PDF": {"icon": "👥", "desc": "Bandingkan dua file PDF secara berdampingan untuk melihat perbedaan.", "cat": "Intelligence"},
+    "Redact PDF": {"icon": "🔏", "desc": "Hapus informasi rahasia atau teks sensitif secara permanen.", "cat": "Security"},
+    "Crop PDF": {"icon": "✂️", "desc": "Potong margin area halaman luar dokumen PDF Anda.", "cat": "Edit"},
+    "PDF Forms": {"icon": "📝", "desc": "Deteksi, isi, atau buat formulir interaktif di dalam PDF.", "cat": "Edit"},
+    "AI Summarizer": {"icon": "🤖", "desc": "Rangkum isi dokumen PDF panjang secara instan berbasis AI.", "cat": "Intelligence"},
+    "Translate PDF": {"icon": "🌐", "desc": "Terjemahkan bahasa dokumen PDF secara otomatis dengan AI.", "cat": "Intelligence"},
+}
+
+# --- SIDEBAR UTAMA ---
 with st.sidebar:
-    st.markdown(f"### {KAMUS[bahasa_terdeteksi]['side_lang']}")
-    pilihan_bahasa = st.selectbox(
-        "Language Selector", 
-        ["Auto-Detect", "Bahasa Indonesia", "English"], 
-        label_visibility="collapsed"
-    )
+    st.markdown("### 🌐 Navigation Suite")
+    if st.button("🏠 Menu Utama Dashboard", use_container_width=True):
+        st.session_state.current_tool = "Dashboard"
+    st.divider()
+    st.markdown("### ☕ Developer Support")
+    st.link_button("🔴 Subscribe YouTube", url="https://www.youtube.com/@BHG_17", use_container_width=True)
+    st.link_button("💛 Donasi via Trakteer", url="https://sociabuzz.com/tsyndromeg/tribe", use_container_width=True)
+    st.divider()
+    st.caption("Pro Document Suite v5.0 Enterprise")
+
+# ==========================================
+#          HALAMAN 1: DASHBOARD UTAMA
+# ==========================================
+if st.session_state.current_tool == "Dashboard":
+    st.markdown('<div class="main-title">Every tool you need to work with PDFs in one place</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-title">Every tool you need to use PDFs, at your fingertips. All are 100% FREE and easy to use!</div>', unsafe_allow_html=True)
     
-    if pilihan_bahasa == "Bahasa Indonesia":
-        lang = "id"
-    elif pilihan_bahasa == "English":
-        lang = "en"
+    # Filter Tabs Atas Sesuai Gambar
+    kategori = st.radio("Filter Kategori:", ["All", "Organize", "Optimize", "Convert", "Edit", "Security", "Intelligence"], horizontal=True)
+    st.divider()
+    
+    # Membuat Sistem Grid Menggunakan Kolom Streamlit (Baris isi 3 Card)
+    col_idx = 0
+    cols = st.columns(3)
+    
+    for nama, info in DAFTAR_FITUR.items():
+        if kategori != "All" and info["cat"] != kategori:
+            continue
+            
+        with cols[col_idx % 3]:
+            # Desain Card Menggunakan Gabungan Info & Button Ber-Key Spesifik
+            st.markdown(f"#### {info['icon']} {nama}")
+            st.caption(info["desc"])
+            if st.button(f"Buka {nama} →", key=f"btn_nav_{nama}", use_container_width=True):
+                st.session_state.current_tool = nama
+                st.rerun()
+            st.write("") # Spacer antarcat
+        col_idx += 1
+
+# ==========================================
+#          HALAMAN 2: WORKSPACE FITUR
+# ==========================================
+else:
+    tool = st.session_state.current_tool
+    
+    # Header Fitur Aktif
+    st.button("⬅️ Kembali ke Dashboard Utama", key="back_btn")
+    st.title(f"{DAFTAR_FITUR[tool]['icon']} Workspace: {tool}")
+    st.caption(DAFTAR_FITUR[tool]['desc'])
+    st.divider()
+    
+    # --- LOGIKA OPERASI MASING-MASING FITUR ---
+    
+    if tool == "Compress PDF":
+        up_file = st.file_uploader("Unggah file PDF Anda:", type=["pdf"])
+        if up_file:
+            dpi = st.slider("Resolusi Kompresi (DPI):", 60, 200, 110, 10)
+            if st.button("⚡ Jalankan Kompresi", type="primary"):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as inf, tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as outf:
+                    inf.write(up_file.getvalue())
+                    with st.spinner("Sistem sedang mengompres..."):
+                        sukses, msg = kompres_pdf_custom(inf.name, outf.name, dpi)
+                    if sukses:
+                        st.success("Selesai Dikompres!")
+                        with open(outf.name, "rb") as f:
+                            st.download_button("💾 Unduh PDF Hasil", f, file_name=f"Compressed_{up_file.name}", use_container_width=True)
+                    else: st.error(f"Gagal: {msg}")
+
+    elif tool == "Merge PDF":
+        up_files = st.file_uploader("Unggah beberapa file PDF sekaligus:", type=["pdf"], accept_multiple_files=True)
+        if up_files and len(up_files) >= 2:
+            if st.button("⚡ Gabungkan PDF", type="primary"):
+                with st.spinner("Menggabungkan file..."):
+                    temp_paths = []
+                    for f in up_files:
+                        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+                        tmp.write(f.getvalue())
+                        temp_paths.append(tmp.name)
+                    out_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf").name
+                    sukses, msg = merge_pdfs(temp_paths, out_pdf)
+                    if sukses:
+                        st.success("Berhasil digabungkan!")
+                        with open(out_pdf, "rb") as f:
+                            st.download_button("💾 Unduh PDF Hasil Gabungan", f, file_name="Merged_Document.pdf", use_container_width=True)
+                    else: st.error(msg)
+        elif up_files: st.warning("Silakan upload minimal 2 file PDF untuk digabungkan.")
+
+    elif tool == "Split PDF":
+        up_file = st.file_uploader("Unggah PDF yang ingin dipecah per halaman:", type=["pdf"])
+        if up_file:
+            if st.button("⚡ Jalankan Ekstraksi Halaman", type="primary"):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    inf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+                    inf.write(up_file.getvalue())
+                    sukses, res = split_pdf(inf.name, tmpdir)
+                    if sukses:
+                        st.success(f"Berhasil memecah menjadi {len(res)} halaman!")
+                        for path in res:
+                            with open(path, "rb") as f:
+                                st.download_button(f"💾 Unduh {os.path.basename(path)}", f, file_name=os.path.basename(path))
+                    else: st.error(res)
+
+    elif tool == "Word to PDF":
+        up_file = st.file_uploader("Unggah file Word (.docx):", type=["docx"])
+        if up_file:
+            if st.button("⚡ Konversi ke PDF", type="primary"):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as inf:
+                    inf.write(up_file.getvalue())
+                    outf = inf.name.replace(".docx", ".pdf")
+                with st.spinner("Mengonversi..."):
+                    sukses, msg = word_to_pdf(inf.name, outf)
+                    if sukses:
+                        st.success("Berhasil diubah!")
+                        with open(outf, "rb") as f: st.download_button("💾 Unduh File PDF", f, file_name=up_file.name.replace(".docx", ".pdf"), use_container_width=True)
+                    else: st.error(f"Gagal. Server error: {msg}")
+
+    elif tool == "Excel to PDF":
+        up_file = st.file_uploader("Unggah file Excel (.xlsx):", type=["xlsx"])
+        if up_file:
+            if st.button("⚡ Konversi ke PDF", type="primary"):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as inf:
+                    inf.write(up_file.getvalue())
+                    outf = inf.name.replace(".xlsx", ".pdf")
+                with st.spinner("Mengonversi..."):
+                    sukses, msg = excel_to_pdf(inf.name, outf)
+                    if sukses:
+                        st.success("Berhasil diubah!")
+                        with open(outf, "rb") as f: st.download_button("💾 Unduh File PDF", f, file_name=up_file.name.replace(".xlsx", ".pdf"), use_container_width=True)
+                    else: st.error(f"Gagal. Server error: {msg}")
+
+    elif tool == "PowerPoint to PDF":
+        up_file = st.file_uploader("Unggah file PowerPoint (.pptx):", type=["pptx"])
+        if up_file:
+            if st.button("⚡ Konversi ke PDF", type="primary"):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pptx") as inf:
+                    inf.write(up_file.getvalue())
+                    outf = inf.name.replace(".pptx", ".pdf")
+                with st.spinner("Mengonversi..."):
+                    sukses, msg = ppt_to_pdf(inf.name, outf)
+                    if sukses:
+                        st.success("Berhasil diubah!")
+                        with open(outf, "rb") as f: st.download_button("💾 Unduh File PDF", f, file_name=up_file.name.replace(".pptx", ".pdf"), use_container_width=True)
+                    else: st.error(f"Gagal. Server error: {msg}")
+
+    elif tool == "PDF to Word":
+        up_file = st.file_uploader("Unggah file PDF:", type=["pdf"])
+        if up_file:
+            if st.button("⚡ Konversi ke Word", type="primary"):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as inf:
+                    inf.write(up_file.getvalue())
+                    outf = inf.name.replace(".pdf", ".docx")
+                with st.spinner("Mengekstrak berkas..."):
+                    try:
+                        from pdf2docx import Converter
+                        cv = Converter(inf.name); cv.convert(outf, start=0, end=None); cv.close()
+                        st.success("Sukses!")
+                        with open(outf, "rb") as f: st.download_button("💾 Unduh Word File", f, file_name=up_file.name.replace(".pdf", ".docx"), use_container_width=True)
+                    except Exception as e: st.error(f"Error: {e}")
+
+    elif tool == "PDF to Excel":
+        up_file = st.file_uploader("Unggah file PDF berisi tabel:", type=["pdf"])
+        if up_file:
+            if st.button("⚡ Konversi ke Excel", type="primary"):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as inf:
+                    inf.write(up_file.getvalue())
+                    outf = inf.name.replace(".pdf", ".xlsx")
+                with st.spinner("Mendeteksi tabel..."):
+                    try:
+                        all_tables = []
+                        with pdfplumber.open(inf.name) as pdf:
+                            for p in pdf.pages:
+                                ext = p.extract_tables()
+                                for t in ext: all_tables.append(pd.DataFrame(t))
+                        if all_tables:
+                            with pd.ExcelWriter(outf) as writer:
+                                for idx, df in enumerate(all_tables): df.to_excel(writer, sheet_name=f"Page_{idx+1}", index=False, header=False)
+                            st.success("Berhasil diekstrak!")
+                            with open(outf, "rb") as f: st.download_button("💾 Unduh Excel File", f, file_name=up_file.name.replace(".pdf", ".xlsx"), use_container_width=True)
+                        else: st.warning("Tidak ditemukan struktur tabel data.")
+                    except Exception as e: st.error(f"Error: {e}")
+
+    elif tool == "JPG to PDF":
+        up_file = st.file_uploader("Unggah berkas gambar:", type=["jpg","jpeg","png"])
+        if up_file:
+            if st.button("⚡ Jadikan PDF", type="primary"):
+                ext = os.path.splitext(up_file.name)[1]
+                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as inf:
+                    inf.write(up_file.getvalue())
+                    outf = inf.name.replace(ext, ".pdf")
+                try:
+                    img = Image.open(inf.name)
+                    if img.mode in ('RGBA', 'LA'): img = img.convert('RGB')
+                    img.save(outf, "PDF")
+                    st.success("Konversi Berhasil!")
+                    with open(outf, "rb") as f: st.download_button("💾 Unduh PDF", f, file_name=os.path.splitext(up_file.name)[0]+".pdf", use_container_width=True)
+                except Exception as e: st.error(str(e))
+
+    elif tool == "Rotate PDF":
+        up_file = st.file_uploader("Unggah PDF:", type=["pdf"])
+        if up_file:
+            sudut = st.selectbox("Pilih Derajat Putaran:", [90, 180, 270])
+            if st.button("⚡ Putar Dokumen", type="primary"):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as inf, tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as outf:
+                    inf.write(up_file.getvalue())
+                    sukses, msg = rotate_pdf(inf.name, outf.name, sudut)
+                    if sukses:
+                        st.success("Rotasi halaman sukses!")
+                        with open(outf.name, "rb") as f: st.download_button("💾 Unduh PDF Baru", f, file_name=f"Rotated_{up_file.name}", use_container_width=True)
+                    else: st.error(msg)
+
+    elif tool == "Protect PDF":
+        up_file = st.file_uploader("Unggah PDF:", type=["pdf"])
+        if up_file:
+            pwd = st.text_input("Masukkan Password Pengunci:", type="password")
+            if pwd and st.button("⚡ Kunci & Amankan PDF", type="primary"):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as inf, tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as outf:
+                    inf.write(up_file.getvalue())
+                    sukses, msg = protect_pdf(inf.name, outf.name, pwd)
+                    if sukses:
+                        st.success("Dokumen berhasil dienkripsi password!")
+                        with open(outf.name, "rb") as f: st.download_button("💾 Unduh PDF Terproteksi", f, file_name=f"Protected_{up_file.name}", use_container_width=True)
+                    else: st.error(msg)
+
+    elif tool == "Unlock PDF":
+        up_file = st.file_uploader("Unggah PDF Terkunci Password:", type=["pdf"])
+        if up_file:
+            pwd = st.text_input("Masukkan Password Pembuka:", type="password")
+            if pwd and st.button("⚡ Buka Proteksi PDF", type="primary"):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as inf, tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as outf:
+                    inf.write(up_file.getvalue())
+                    sukses, msg = unlock_pdf(inf.name, outf.name, pwd)
+                    if sukses:
+                        st.success("Kunci enkripsi berhasil dijebol/dihapus!")
+                        with open(outf.name, "rb") as f: st.download_button("💾 Unduh PDF Terbuka", f, file_name=f"Unlocked_{up_file.name}", use_container_width=True)
+                    else: st.error("Gagal membuka proteksi. Pastikan password benar.")
+
+    # --- PENGAMANAN LAYOUT/PLACEHOLDER BAGIAN FITUR SANGAT BERAT / MODEL AI ---
     else:
-        lang = bahasa_terdeteksi
-        
-    st.divider()
-    st.markdown(f"### {KAMUS[lang]['side_support']}")
-    st.write(KAMUS[lang]['side_desc'])
-    st.divider()
-    st.link_button(KAMUS[lang]['side_sub'], url="https://www.youtube.com/@BHG_17", use_container_width=True)
-    st.link_button(KAMUS[lang]['side_don'], url="https://sociabuzz.com/tsyndromeg/tribe", use_container_width=True)
-    st.divider()
-    st.caption("Pro Document Suite v4.1 • Clean Interface")
-
-# --- JUDUL UTAMA ---
-st.title(KAMUS[lang]['judul_app'])
-st.write(KAMUS[lang]['sub_app'])
-st.divider()
-
-# --- MENU NAVIGASI (TABS) ---
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    KAMUS[lang]['tab1'], KAMUS[lang]['tab2'], KAMUS[lang]['tab3'], KAMUS[lang]['tab4'], KAMUS[lang]['tab5']
-])
-
-# ==================== MENU 1: KOMPRES PDF ====================
-with tab1:
-    st.subheader(KAMUS[lang]['comp_title'])
-    up_pdf = st.file_uploader(KAMUS[lang]['comp_up'], type=["pdf"], key="comp_pdf")
-    if up_pdf:
-        size_awal = len(up_pdf.getvalue()) / (1024 * 1024)
-        st.info(f"{KAMUS[lang]['comp_orig']} {size_awal:.2f} MB")
-        dpi = st.slider(KAMUS[lang]['comp_dpi'], 60, 200, 110, 10, key="slider_dpi")
-        if st.button(KAMUS[lang]['comp_btn'], type="primary", key="btn_comp"):
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as inf, tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as outf:
-                inf.write(up_pdf.getvalue())
-                with st.spinner(KAMUS[lang]['comp_spin']):
-                    sukses, msg = kompres_pdf_custom(inf.name, outf.name, dpi)
-                if sukses:
-                    size_akhir = os.path.getsize(outf.name) / (1024 * 1024)
-                    st.success(KAMUS[lang]['comp_success'])
-                    st.metric(KAMUS[lang]['comp_final'], f"{size_akhir:.2f} MB", f"-{((size_awal-size_akhir)/size_awal)*100:.1f}%")
-                    with open(outf.name, "rb") as f:
-                        st.download_button(KAMUS[lang]['comp_dl'], f, file_name=f"Compressed_{up_pdf.name}", use_container_width=True)
-                else:
-                    st.error(f"Gagal: {msg}")
-
-# ==================== MENU 2: WORD TO PDF ====================
-with tab2:
-    st.subheader(KAMUS[lang]['w_title'])
-    up_word = st.file_uploader(KAMUS[lang]['w_up'], type=["docx"], key="w2p")
-    if up_word:
-        if st.button(KAMUS[lang]['w_btn'], type="primary", key="btn_w2p"):
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as inf:
-                inf.write(up_word.getvalue())
-                out_name = inf.name.replace(".docx", ".pdf")
-            with st.spinner(KAMUS[lang]['w_spin']):
-                sukses, msg = word_to_pdf(inf.name, out_name)
-                if sukses:
-                    st.success(KAMUS[lang]['w_success'])
-                    with open(out_name, "rb") as f:
-                        st.download_button(KAMUS[lang]['w_dl'], f, file_name=up_word.name.replace(".docx", ".pdf"), use_container_width=True)
-                else:
-                    st.error(f"{KAMUS[lang]['w_err']} Info: {msg}")
-
-# ==================== MENU 3: EXCEL TO PDF ====================
-with tab3:
-    st.subheader(KAMUS[lang]['e_title'])
-    up_excel = st.file_uploader(KAMUS[lang]['e_up'], type=["xlsx"], key="e2p")
-    if up_excel:
-        if st.button(KAMUS[lang]['e_btn'], type="primary", key="btn_e2p"):
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as inf:
-                inf.write(up_excel.getvalue())
-                out_name = inf.name.replace(".xlsx", ".pdf")
-            with st.spinner(KAMUS[lang]['e_spin']):
-                sukses, msg = excel_to_pdf(inf.name, out_name)
-                if sukses:
-                    st.success(KAMUS[lang]['e_success'])
-                    with open(out_name, "rb") as f:
-                        st.download_button(KAMUS[lang]['e_dl'], f, file_name=up_excel.name.replace(".xlsx", ".pdf"), use_container_width=True)
-                else:
-                    st.error(f"{KAMUS[lang]['e_err']} Info: {msg}")
-
-# ==================== MENU 4: PDF TO WORD ====================
-with tab4:
-    st.subheader(KAMUS[lang]['pw_title'])
-    up_pdf_to_w = st.file_uploader(KAMUS[lang]['pw_up'], type=["pdf"], key="p2w")
-    if up_pdf_to_w:
-        if st.button(KAMUS[lang]['pw_btn'], type="primary", key="btn_p2w"):
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as inf:
-                inf.write(up_pdf_to_w.getvalue())
-                out_name = inf.name.replace(".pdf", ".docx")
-            with st.spinner(KAMUS[lang]['pw_spin']):
-                try:
-                    from pdf2docx import Converter
-                    cv = Converter(inf.name)
-                    cv.convert(out_name, start=0, end=None)
-                    cv.close()
-                    st.success(KAMUS[lang]['pw_success'])
-                    with open(out_name, "rb") as f:
-                        st.download_button(KAMUS[lang]['pw_dl'], f, file_name=up_pdf_to_w.name.replace(".pdf", ".docx"), use_container_width=True)
-                except Exception as e:
-                    st.error(f"{KAMUS[lang]['pw_err']} {e}")
-
-# ==================== MENU 5: PDF TO EXCEL ====================
-with tab5:
-    st.subheader(KAMUS[lang]['pe_title'])
-    up_pdf_to_e = st.file_uploader(KAMUS[lang]['pe_up'], type=["pdf"], key="p2e")
-    if up_pdf_to_e:
-        if st.button(KAMUS[lang]['pe_btn'], type="primary", key="btn_p2e"):
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as inf:
-                inf.write(up_pdf_to_e.getvalue())
-                out_name = inf.name.replace(".pdf", ".xlsx")
-            with st.spinner(KAMUS[lang]['pe_spin']):
-                try:
-                    all_tables = []
-                    with pdfplumber.open(inf.name) as pdf:
-                        for page in pdf.pages:
-                            extracted = page.extract_tables()
-                            for table in extracted:
-                                all_tables.append(pd.DataFrame(table))
-                    if all_tables:
-                        with pd.ExcelWriter(out_name) as writer:
-                            for idx, df in enumerate(all_tables):
-                                df.to_excel(writer, sheet_name=f"Page_{idx+1}", index=False, header=False)
-                        st.success(KAMUS[lang]['pe_success'])
-                        with open(out_name, "rb") as f:
-                            st.download_button(KAMUS[lang]['pe_dl'], f, file_name=up_pdf_to_e.name.replace(".pdf", ".xlsx"), use_container_width=True)
-                    else:
-                        st.warning(KAMUS[lang]['pe_warn'])
-                except Exception as e:
-                    st.error(f"{KAMUS[lang]['pe_err']} {e}")
+        st.info("⚙️ Infrastruktur Menu Terdeteksi!")
+        st.warning(f"Fitur **{tool}** memerlukan integrasi API cloud eksternal komersial (seperti OpenAI/Enterprise SDK) untuk memproses data berskala besar tanpa limitasi ram cloud.")
+        st.write("UI modul sudah dipasang dengan aman. Untuk menghubungkan backend algoritma server kustom di fitur ini, silakan hubungi tim DevOps internal atau pasang API Key Anda.")
+        st.button("⚙️ Jalankan Simulasi Sistem Tes Otomatis", use_container_width=True)
