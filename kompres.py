@@ -4,7 +4,10 @@ import subprocess
 import tempfile
 import pandas as pd
 import pdfplumber
-import comtypes.client
+
+# Pengamanan import comtypes: Hanya di-import jika berjalan di Windows OS
+if os.name == 'nt':
+    import comtypes.client
 
 # --- FUNGSI UTAMA (BACKEND) ---
 
@@ -43,34 +46,60 @@ def kompres_pdf_custom(input_path, output_path, dpi):
         return False, str(e)
 
 def word_to_pdf(input_path, output_path):
-    try:
-        comtypes.CoInitialize()
-        word = comtypes.client.CreateObject('Word.Application')
-        word.Visible = False
-        doc = word.Documents.Open(os.path.abspath(input_path))
-        doc.SaveAs(os.path.abspath(output_path), FileFormat=17)
-        doc.Close(False)
-        word.Quit()
-        return True, "Sukses"
-    except Exception as e:
-        try: word.Quit()
-        except: pass
-        return False, str(e)
+    # JIKA BERJALAN DI WINDOWS (LOKAL)
+    if os.name == 'nt':
+        try:
+            comtypes.CoInitialize()
+            word = comtypes.client.CreateObject('Word.Application')
+            word.Visible = False
+            doc = word.Documents.Open(os.path.abspath(input_path))
+            doc.SaveAs(os.path.abspath(output_path), FileFormat=17)
+            doc.Close(False)
+            word.Quit()
+            return True, "Sukses"
+        except Exception as e:
+            try: word.Quit()
+            except: pass
+            return False, str(e)
+    # JIKA BERJALAN DI LINUX (STREAMLIT COMMUNITY CLOUD)
+    else:
+        try:
+            outdir = os.path.dirname(output_path)
+            subprocess.run([
+                'libreoffice', '--headless', '--convert-to', 'pdf',
+                '--outdir', outdir, input_path
+            ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return True, "Sukses"
+        except Exception as e:
+            return False, str(e)
 
 def excel_to_pdf(input_path, output_path):
-    try:
-        comtypes.CoInitialize()
-        excel = comtypes.client.CreateObject('Excel.Application')
-        excel.Visible = False
-        wb = excel.Workbooks.Open(os.path.abspath(input_path))
-        wb.ExportAsFixedFormat(0, os.path.abspath(output_path))
-        wb.Close(False)
-        excel.Quit()
-        return True, "Sukses"
-    except Exception as e:
-        try: excel.Quit()
-        except: pass
-        return False, str(e)
+    # JIKA BERJALAN DI WINDOWS (LOKAL)
+    if os.name == 'nt':
+        try:
+            comtypes.CoInitialize()
+            excel = comtypes.client.CreateObject('Excel.Application')
+            excel.Visible = False
+            wb = excel.Workbooks.Open(os.path.abspath(input_path))
+            wb.ExportAsFixedFormat(0, os.path.abspath(output_path))
+            wb.Close(False)
+            excel.Quit()
+            return True, "Sukses"
+        except Exception as e:
+            try: excel.Quit()
+            except: pass
+            return False, str(e)
+    # JIKA BERJALAN DI LINUX (STREAMLIT COMMUNITY CLOUD)
+    else:
+        try:
+            outdir = os.path.dirname(output_path)
+            subprocess.run([
+                'libreoffice', '--headless', '--convert-to', 'pdf',
+                '--outdir', outdir, input_path
+            ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return True, "Sukses"
+        except Exception as e:
+            return False, str(e)
 
 # --- DETEKSI BAHASA OTOMATIS ---
 bahasa_terdeteksi = "id"
@@ -92,8 +121,8 @@ KAMUS = {
         "comp_title": "Menu Kompresi PDF", "comp_up": "Unggah file PDF yang ingin dikecilkan:", "comp_orig": "📂 Berkas asli:",
         "comp_dpi": "Resolusi (DPI):", "comp_btn": "⚡ Jalankan Kompresi", "comp_spin": "Sistem sedang mengoptimasi...",
         "comp_success": "Selesai dikompres!", "comp_final": "Ukuran Akhir", "comp_dl": "💾 Unduh PDF Hasil",
-        "w_title": "Konversi Word (.docx) ke PDF", "w_up": "Unggah dokumen Word Anda:", "w_btn": "⚡ Konversi ke PDF", "w_spin": "Mengonversi dokumen Word...", "w_success": "Konversi Berhasil!", "w_dl": "💾 Unduh File PDF", "w_err": "Gagal konversi. Pastikan MS Word terinstal.",
-        "e_title": "Konversi Excel (.xlsx) ke PDF", "e_up": "Unggah sheet Excel Anda:", "e_btn": "⚡ Konversi ke PDF", "e_spin": "Memproses lembar kerja Excel...", "e_success": "Konversi Berhasil!", "e_dl": "💾 Unduh File PDF", "e_err": "Gagal konversi. Pastikan MS Excel terinstal.",
+        "w_title": "Konversi Word (.docx) ke PDF", "w_up": "Unggah dokumen Word Anda:", "w_btn": "⚡ Konversi ke PDF", "w_spin": "Mengonversi dokumen Word...", "w_success": "Konversi Berhasil!", "w_dl": "💾 Unduh File PDF", "w_err": "Gagal konversi. Sistem mendeteksi gangguan software Office.",
+        "e_title": "Konversi Excel (.xlsx) ke PDF", "e_up": "Unggah sheet Excel Anda:", "e_btn": "⚡ Konversi ke PDF", "e_spin": "Memproses lembar kerja Excel...", "e_success": "Konversi Berhasil!", "e_dl": "💾 Unduh File PDF", "e_err": "Gagal konversi. Sistem mendeteksi gangguan software Office.",
         "pw_title": "Konversi PDF ke Word (.docx)", "pw_up": "Unggah file PDF untuk dijadikan Word:", "pw_btn": "⚡ Konversi ke Word", "pw_spin": "Mengekstrak teks...", "pw_success": "Konversi Berhasil!", "pw_dl": "💾 Unduh File Word", "pw_err": "Gagal konversi:",
         "pe_title": "Konversi PDF ke Excel (.xlsx)", "pe_up": "Unggah file PDF berisi tabel data:", "pe_btn": "⚡ Konversi ke Excel", "pe_spin": "Mendeteksi tabel data...", "pe_success": "Tabel data berhasil diekstrak!", "pe_dl": "💾 Unduh File Excel", "pe_err": "Gagal mengekstrak data:", "pe_warn": "Tidak dideteksi adanya struktur tabel data numerik."
     },
@@ -106,8 +135,8 @@ KAMUS = {
         "comp_title": "PDF Compression Menu", "comp_up": "Upload PDF file to compress:", "comp_orig": "📂 Original file size:",
         "comp_dpi": "Resolution (DPI):", "comp_btn": "⚡ Run Compression", "comp_spin": "System is optimizing...",
         "comp_success": "Successfully compressed!", "comp_final": "Final Size", "comp_dl": "💾 Download Resulting PDF",
-        "w_title": "Convert Word (.docx) to PDF", "w_up": "Upload your Word document:", "w_btn": "⚡ Convert to PDF", "w_spin": "Converting Word document...", "w_success": "Conversion Successful!", "w_dl": "💾 Download PDF File", "w_err": "Conversion failed. Ensure MS Word is installed.",
-        "e_title": "Convert Excel (.xlsx) to PDF", "e_up": "Upload your Excel sheet:", "e_btn": "⚡ Convert to PDF", "e_spin": "Processing Excel sheet...", "e_success": "Conversion Successful!", "e_dl": "💾 Download PDF File", "e_err": "Conversion failed. Ensure MS Excel is installed.",
+        "w_title": "Convert Word (.docx) to PDF", "w_up": "Upload your Word document:", "w_btn": "⚡ Convert to PDF", "w_spin": "Converting Word document...", "w_success": "Conversion Successful!", "w_dl": "💾 Download PDF File", "w_err": "Conversion failed. Office software issue detected.",
+        "e_title": "Convert Excel (.xlsx) to PDF", "e_up": "Upload your Excel sheet:", "e_btn": "⚡ Convert to PDF", "e_spin": "Processing Excel sheet...", "e_success": "Conversion Successful!", "e_dl": "💾 Download PDF File", "e_err": "Conversion failed. Office software issue detected.",
         "pw_title": "Convert PDF to Word (.docx)", "pw_up": "Upload PDF file to convert into Word:", "pw_btn": "⚡ Convert to Word", "pw_spin": "Extracting text...", "pw_success": "Conversion Successful!", "pw_dl": "💾 Download Word File", "pw_err": "Conversion failed:",
         "pe_title": "Convert PDF to Excel (.xlsx)", "pe_up": "Upload PDF file containing data tables:", "pe_btn": "⚡ Convert to Excel", "pe_spin": "Detecting data tables...", "pe_success": "Tables successfully extracted!", "pe_dl": "💾 Download Excel File", "pe_err": "Data extraction failed:", "pe_warn": "No numerical table structures were detected in the file."
     }
@@ -116,10 +145,9 @@ KAMUS = {
 # --- KONFIGURASI HALAMAN STREAMLIT ---
 st.set_page_config(page_title="Pro Document Suite", page_icon="💼", layout="centered")
 
-# --- TRICK CSS HYPER-SPECIFICITY (BOM NUKLIR UNTUK EMOTION CACHE STREAMLIT) ---
+# --- TRICK CSS HYPER-SPECIFICITY (MENGHAPUS TOTAL INFO LIMIT 200MB) ---
 st.markdown("""
     <style>
-    /* Mengincar semua kemungkinan struktur DOM dari level HTML teratas */
     html body [data-testid="stFileUploaderLimitHint"],
     html body div[data-testid="stFileUploader"] small,
     html body div[data-testid="stFileUploader"] [class*="Limit"],
@@ -137,7 +165,6 @@ st.markdown("""
         opacity: 0 !important;
     }
     
-    /* Memastikan daftar file yang sukses di-upload AMAN & TETAP MUNCUL */
     html body [data-testid="stFileUploaderUploadedFiles"] {
         display: block !important;
         visibility: visible !important;
